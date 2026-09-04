@@ -1,0 +1,113 @@
+output_table: sales.dq.dq_results
+rules:
+- rule_id: BRZ_ORD_001
+  layer: Bronze
+  table: orders
+  rule_type: Duplicate check
+  severity: Medium
+  expectation: order_id should be unique
+  fail_sql: SELECT order_id FROM sales.bronze.orders GROUP BY order_id HAVING COUNT(*)
+    > 1
+- rule_id: SLV_ORD_001
+  layer: Silver
+  table: orders
+  rule_type: Standardization
+  severity: High
+  expectation: delivered/invoiced -> completed; canceled/unavaliable -> canceled;
+    else pending
+  fail_sql: SELECT * FROM sales.silver.orders WHERE order_status_group NOT IN ('completed','canceled','pending')
+- rule_id: SLV_ORD_002
+  layer: Silver
+  table: orders
+  rule_type: Temporal integrity
+  severity: High
+  expectation: approved < purchase OR carrier < approved OR delivered < carrier marks
+    invalid
+  fail_sql: SELECT * FROM sales.silver.orders WHERE is_invalid_timeflow = true
+- rule_id: SLV_ORD_003
+  layer: Silver
+  table: orders
+  rule_type: Completeness
+  severity: Medium
+  expectation: Null approved/carrier/customer delivery dates should be visible
+  fail_sql: SELECT * FROM sales.silver.orders WHERE is_missing_approved OR is_missing_carrier_date
+    OR is_missing_customer_date
+- rule_id: BRZ_REV_001
+  layer: Bronze
+  table: order_reviews
+  rule_type: Duplicate check
+  severity: High
+  expectation: Duplicate review_id detected in profiling notes
+  fail_sql: SELECT review_id FROM sales.bronze.order_reviews GROUP BY review_id HAVING
+    COUNT(*) > 1
+- rule_id: SLV_REV_001
+  layer: Silver
+  table: order_reviews
+  rule_type: Constraint
+  severity: High
+  expectation: review_score must be between 1 and 5
+  fail_sql: SELECT * FROM sales.silver.order_reviews WHERE review_score NOT BETWEEN
+    1 AND 5
+- rule_id: SLV_REV_002
+  layer: Silver
+  table: order_reviews
+  rule_type: Quarantine
+  severity: High
+  expectation: Null review_id, null review_score, or invalid timestamps should be
+    isolated
+  fail_sql: SELECT * FROM sales.silver.reviews_bad_rows
+- rule_id: SLV_PRD_001
+  layer: Silver
+  table: products
+  rule_type: Range check
+  severity: High
+  expectation: Weight 0-10000; dimensions 0-200
+  fail_sql: SELECT * FROM sales.silver.products WHERE product_weight_g <= 0 OR product_weight_g
+    >= 10000 OR product_length_cm <= 0 OR product_height_cm <= 0 OR product_width_cm
+    <= 0
+- rule_id: SLV_PRD_002
+  layer: Silver
+  table: products
+  rule_type: Missing value handling
+  severity: Medium
+  expectation: category -> unknown_category; photos -> 1
+  fail_sql: SELECT * FROM sales.silver.products WHERE product_category_name IS NULL
+    OR product_photos_qty IS NULL
+- rule_id: SLV_ITM_001
+  layer: Silver
+  table: order_items
+  rule_type: Duplicate resolution
+  severity: High
+  expectation: Keep latest shipping_limit_date, then highest price
+  fail_sql: SELECT order_id, order_item_id FROM sales.silver.order_items GROUP BY
+    order_id, order_item_id HAVING COUNT(*) > 1
+- rule_id: SLV_ITM_002
+  layer: Silver
+  table: order_items
+  rule_type: Value check
+  severity: Medium
+  expectation: price <= 0 or freight_value < 0 should be flagged
+  fail_sql: SELECT * FROM sales.silver.order_items WHERE is_price_nonpositive OR is_freight_negative
+- rule_id: SLV_ITM_003
+  layer: Silver
+  table: order_items
+  rule_type: Date range check
+  severity: Low
+  expectation: ship year outside 2017 to 2019 is outlier
+  fail_sql: SELECT * FROM sales.silver.order_items WHERE is_ship_date_outlier = true
+- rule_id: SLV_GEO_001
+  layer: Silver
+  table: geolocation
+  rule_type: Deduplication
+  severity: Medium
+  expectation: One representative row per zip prefix
+  fail_sql: SELECT geolocation_zip_code_prefix FROM sales.silver.geolocation GROUP
+    BY geolocation_zip_code_prefix HAVING COUNT(*) > 1
+- rule_id: GLD_ORDPERF_001
+  layer: Gold
+  table: order_performance
+  rule_type: Aggregation grain
+  severity: High
+  expectation: One row per order after joining item, payment, and review summaries
+  fail_sql: SELECT order_id FROM sales.gold.order_performance GROUP BY order_id HAVING
+    COUNT(*) > 1

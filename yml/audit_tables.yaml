@@ -1,0 +1,30 @@
+tables:
+  BRONZE:
+  - sales.bronze.customers
+  - sales.bronze.geolocation
+  - sales.bronze.order_items
+  - sales.bronze.order_payments
+  - sales.bronze.order_reviews
+  - sales.bronze.orders
+  - sales.bronze.product_category
+  - sales.bronze.products
+  - sales.bronze.sellers
+  SILVER:
+  - sales.silver.customers
+  - sales.silver.sellers
+  - sales.silver.products
+  - sales.silver.orders
+  - sales.silver.order_items
+  - sales.silver.order_payments
+  - sales.silver.order_reviews
+  - sales.silver.reviews_bad_rows
+  - sales.silver.geolocation
+  - sales.silver.category_lookup
+  GOLD:
+  - sales.gold.customer_top_5_states_by_city_diversity
+  - sales.gold.customer_distribution_by_state
+  - sales.gold.seller_city_stats
+  - sales.gold.product_category_summary
+  - sales.gold.product_category_summary_en
+  - sales.gold.order_performance
+output_table: sales.audit.row_count_audit

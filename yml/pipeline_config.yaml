@@ -1,0 +1,1176 @@
+pipeline:
+  name: olist_lakehouse
+  description: Olist e-commerce medallion pipeline — Bronze to Silver to Gold
+  bronze_to_silver:
+    sales.silver.customers:
+      source_table: sales.bronze.customers
+      columns:
+      - source_column: customer_id
+        target_column: customer_id
+        target_data_type: STRING
+        transformation: SELECT DISTINCT; keep original value
+        dq_rule: WHERE customer_id IS NOT NULL
+        business_definition: Primary customer order identifier
+        status: Mapped
+        pii_tag: PII
+      - source_column: customer_unique_id
+        target_column: customer_unique_id
+        target_data_type: STRING
+        transformation: Pass-through
+        dq_rule: Inherited from not-null customer_id filter
+        business_definition: Stable unique customer identifier
+        status: Mapped
+        pii_tag: PII
+      - source_column: customer_zip_code_prefix
+        target_column: customer_zip_code_prefix
+        target_data_type: INT
+        transformation: CAST(customer_zip_code_prefix AS INT)
+        dq_rule: Zip retained for joins to geolocation
+        business_definition: Customer zip code prefix
+        status: Mapped
+        pii_tag: PII
+      - source_column: customer_city
+        target_column: customer_city
+        target_data_type: STRING
+        transformation: LOWER(TRIM(REGEXP_REPLACE(customer_city, '\s+', ' ')))
+        dq_rule: Normalize whitespace and letter case
+        business_definition: Normalized customer city
+        status: Mapped
+        pii_tag: PII
+      - source_column: customer_state
+        target_column: customer_state
+        target_data_type: STRING
+        transformation: UPPER(TRIM(REGEXP_REPLACE(customer_state, '\s+', ' ')))
+        dq_rule: Normalize whitespace and state code case
+        business_definition: Normalized customer state
+        status: Mapped
+        pii_tag: PII
+    sales.silver.sellers:
+      source_table: sales.bronze.sellers
+      columns:
+      - source_column: seller_id
+        target_column: seller_id
+        target_data_type: STRING
+        transformation: Keep one row using ROW_NUMBER over seller_id
+        dq_rule: WHERE seller_id IS NOT NULL
+        business_definition: Primary seller identifier
+        status: Mapped
+        pii_tag: PII
+      - source_column: seller_zip_code_prefix
+        target_column: seller_zip_code_prefix
+        target_data_type: INT
+        transformation: CAST(seller_zip_code_prefix AS INT)
+        dq_rule: Selected row per seller_id
+        business_definition: Seller zip code prefix
+        status: Mapped
+        pii_tag: PII
+      - source_column: seller_city
+        target_column: seller_city
+        target_data_type: STRING
+        transformation: LOWER(TRIM(REGEXP_REPLACE(seller_city, '\s+', ' ')))
+        dq_rule: Normalize whitespace and case
+        business_definition: Normalized seller city
+        status: Mapped
+        pii_tag: PII
+      - source_column: seller_state
+        target_column: seller_state
+        target_data_type: STRING
+        transformation: UPPER(TRIM(REGEXP_REPLACE(seller_state, '\s+', ' ')))
+        dq_rule: Normalize whitespace and state code
+        business_definition: Normalized seller state
+        status: Mapped
+        pii_tag: PII
+    sales.silver.products:
+      source_table: sales.bronze.products
+      columns:
+      - source_column: product_id
+        target_column: product_id
+        target_data_type: STRING
+        transformation: Pass-through
+        dq_rule: Retain records after physical dimension cleansing
+        business_definition: Primary product identifier
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: product_category_name
+        target_column: product_category_name
+        target_data_type: STRING
+        transformation: COALESCE(product_category_name, "unknown_category")
+        dq_rule: Fill missing category as unknown_category
+        business_definition: Product category in Portuguese
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: product_name_lenght
+        target_column: product_name_lenght
+        target_data_type: INT
+        transformation: CAST to INT; fill null with rounded avg by category
+        dq_rule: Category-window average imputation
+        business_definition: Product name length from source spelling
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: product_description_lenght
+        target_column: product_description_lenght
+        target_data_type: INT
+        transformation: CAST to INT; fill null with rounded avg by category
+        dq_rule: Category-window average imputation
+        business_definition: Product description length from source spelling
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: product_photos_qty
+        target_column: product_photos_qty
+        target_data_type: INT
+        transformation: CAST to INT; COALESCE null to 1
+        dq_rule: Default null photo count to 1
+        business_definition: Number of product photos
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: product_weight_g
+        target_column: product_weight_g
+        target_data_type: FLOAT
+        transformation: CAST to FLOAT
+        dq_rule: product_weight_g > 0 AND product_weight_g < 10000
+        business_definition: Product weight in grams
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: product_length_cm
+        target_column: product_length_cm
+        target_data_type: FLOAT
+        transformation: CAST to FLOAT
+        dq_rule: product_length_cm > 0 AND product_length_cm < 200
+        business_definition: Product length in cm
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: product_height_cm
+        target_column: product_height_cm
+        target_data_type: FLOAT
+        transformation: CAST to FLOAT
+        dq_rule: product_height_cm > 0 AND product_height_cm < 200
+        business_definition: Product height in cm
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: product_width_cm
+        target_column: product_width_cm
+        target_data_type: FLOAT
+        transformation: CAST to FLOAT
+        dq_rule: product_width_cm > 0 AND product_width_cm < 200
+        business_definition: Product width in cm
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: product_length_cm * product_height_cm * product_width_cm
+        target_column: product_volume_cm3
+        target_data_type: DECIMAL(18,2)
+        transformation: ROUND(length * height * width, 2)
+        dq_rule: Only when cleansed dimensions are positive
+        business_definition: Derived product volume
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: product_weight_g / volume
+        target_column: product_density_g_per_cm3
+        target_data_type: DECIMAL(18,4)
+        transformation: ROUND(weight / volume, 4)
+        dq_rule: Return NULL when volume is not positive
+        business_definition: Derived density
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: current_timestamp()
+        target_column: last_update_ts
+        target_data_type: TIMESTAMP
+        transformation: current_timestamp()
+        dq_rule: Audit timestamp at write time
+        business_definition: Silver refresh timestamp
+        status: Mapped
+        pii_tag: Non-PII
+    sales.silver.orders:
+      source_table: sales.bronze.orders
+      columns:
+      - source_column: order_id
+        target_column: order_id
+        target_data_type: STRING
+        transformation: Pass-through
+        dq_rule: No explicit filter in final table
+        business_definition: Primary order identifier
+        status: Mapped
+        pii_tag: PII
+      - source_column: customer_id
+        target_column: customer_id
+        target_data_type: STRING
+        transformation: Pass-through
+        dq_rule: No explicit filter in final table
+        business_definition: Foreign key to customers
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_status
+        target_column: order_status_group
+        target_data_type: STRING
+        transformation: 'LOWER/TRIM then group: delivered/invoiced=completed; canceled/unavaliable=canceled;
+          else pending'
+        dq_rule: Standardize operational status
+        business_definition: Normalized business status
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_purchase_timestamp
+        target_column: order_purchase_timestamp
+        target_data_type: TIMESTAMP
+        transformation: Pass-through timestamp
+        dq_rule: Used for purchase date and time features
+        business_definition: Original purchase timestamp
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_delivered_customer_date
+        target_column: order_delivered_customer_date
+        target_data_type: TIMESTAMP
+        transformation: Pass-through timestamp
+        dq_rule: May be null; flagged separately
+        business_definition: Customer delivery timestamp
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_purchase_timestamp
+        target_column: purchase_date
+        target_data_type: DATE
+        transformation: TO_DATE(order_purchase_timestamp)
+        dq_rule: Date conversion
+        business_definition: Purchase date
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_approved_at
+        target_column: approved_date
+        target_data_type: DATE
+        transformation: TO_DATE(order_approved_at)
+        dq_rule: Date conversion
+        business_definition: Approval date
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_delivered_carrier_date
+        target_column: carrier_date
+        target_data_type: DATE
+        transformation: TO_DATE(order_delivered_carrier_date)
+        dq_rule: Date conversion
+        business_definition: Carrier handoff date
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_delivered_customer_date
+        target_column: delivered_date
+        target_data_type: DATE
+        transformation: TO_DATE(order_delivered_customer_date)
+        dq_rule: Date conversion
+        business_definition: Customer delivered date
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_estimated_delivery_date
+        target_column: estimated_date
+        target_data_type: DATE
+        transformation: TO_DATE(order_estimated_delivery_date)
+        dq_rule: Date conversion
+        business_definition: Estimated delivery date
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_purchase_timestamp
+        target_column: purchase_hour
+        target_data_type: INT
+        transformation: HOUR(order_purchase_timestamp)
+        dq_rule: Time extraction
+        business_definition: Hour of purchase
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_delivered_customer_date
+        target_column: delivered_hour
+        target_data_type: INT
+        transformation: HOUR(order_delivered_customer_date) when not null
+        dq_rule: Null-safe time extraction
+        business_definition: Hour of delivery
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_purchase_timestamp
+        target_column: purchase_weekday_name
+        target_data_type: STRING
+        transformation: DATE_FORMAT(order_purchase_timestamp, "E")
+        dq_rule: Date formatting
+        business_definition: Purchase weekday name
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_delivered_customer_date
+        target_column: delivered_weekday_name
+        target_data_type: STRING
+        transformation: DATE_FORMAT(order_delivered_customer_date, "E") when not null
+        dq_rule: Null-safe date formatting
+        business_definition: Delivery weekday name
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_delivered_customer_date - order_purchase_timestamp
+        target_column: delivery_days
+        target_data_type: INT
+        transformation: DATEDIFF(delivered_customer_date, purchase_timestamp)
+        dq_rule: May be null if delivery missing
+        business_definition: Days from purchase to delivery
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_delivered_customer_date - order_estimated_delivery_date
+        target_column: delay_days
+        target_data_type: INT
+        transformation: DATEDIFF(delivered_customer_date, estimated_delivery_date)
+        dq_rule: Only when delivered date exists
+        business_definition: Actual vs estimated delivery gap
+        status: Mapped
+        pii_tag: PII
+      - source_column: purchase_hour
+        target_column: purchase_part_of_day
+        target_data_type: STRING
+        transformation: 6-11 morning; 12-17 afternoon; 18-22 evening; else night
+        dq_rule: Derived from purchase hour
+        business_definition: Purchase daypart
+        status: Mapped
+        pii_tag: PII
+      - source_column: purchase_weekday
+        target_column: is_weekend_purchase
+        target_data_type: BOOLEAN
+        transformation: purchase_weekday IN (1, 7)
+        dq_rule: Spark DAYOFWEEK weekend rule
+        business_definition: Weekend purchase flag
+        status: Mapped
+        pii_tag: PII
+      - source_column: timestamps
+        target_column: is_invalid_timeflow
+        target_data_type: BOOLEAN
+        transformation: approved<purchase OR carrier<approved OR delivered<carrier
+        dq_rule: Flags temporal inconsistencies
+        business_definition: Invalid lifecycle sequence flag
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: order_delivered_customer_date
+        target_column: is_missing_customer_date
+        target_data_type: BOOLEAN
+        transformation: order_delivered_customer_date IS NULL
+        dq_rule: Missing delivery completion date
+        business_definition: Missing customer delivery date flag
+        status: Mapped
+        pii_tag: PII
+      - source_column: carrier_date
+        target_column: is_missing_carrier_date
+        target_data_type: BOOLEAN
+        transformation: carrier_date IS NULL
+        dq_rule: Missing carrier date
+        business_definition: Missing carrier date flag
+        status: Mapped
+        pii_tag: PII
+      - source_column: approved_date
+        target_column: is_missing_approved
+        target_data_type: BOOLEAN
+        transformation: approved_date IS NULL
+        dq_rule: Missing approval date
+        business_definition: Missing approval date flag
+        status: Mapped
+        pii_tag: PII
+    sales.silver.order_items:
+      source_table: sales.bronze.order_items
+      columns:
+      - source_column: order_id
+        target_column: order_id
+        target_data_type: STRING
+        transformation: TRIM(order_id)
+        dq_rule: Deduplicate by order_id + order_item_id
+        business_definition: Order identifier
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_item_id
+        target_column: order_item_id
+        target_data_type: INT
+        transformation: CAST(order_item_id AS INT)
+        dq_rule: Deduplicate by order_id + order_item_id
+        business_definition: Line item sequence
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: product_id
+        target_column: product_id
+        target_data_type: STRING
+        transformation: TRIM(product_id)
+        dq_rule: Retain product FK
+        business_definition: Product identifier
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: seller_id
+        target_column: seller_id
+        target_data_type: STRING
+        transformation: TRIM(seller_id)
+        dq_rule: Retain seller FK
+        business_definition: Seller identifier
+        status: Mapped
+        pii_tag: PII
+      - source_column: shipping_limit_date
+        target_column: shipping_limit_date
+        target_data_type: TIMESTAMP
+        transformation: TO_TIMESTAMP(shipping_limit_date)
+        dq_rule: Order by latest in duplicate resolution
+        business_definition: Shipping limit timestamp
+        status: Mapped
+        pii_tag: PII
+      - source_column: price
+        target_column: price
+        target_data_type: DOUBLE
+        transformation: CAST(price AS DOUBLE)
+        dq_rule: Flag price <= 0
+        business_definition: Product item price
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: freight_value
+        target_column: freight_value
+        target_data_type: DOUBLE
+        transformation: CAST(freight_value AS DOUBLE)
+        dq_rule: Flag freight_value < 0
+        business_definition: Freight cost
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: price
+        target_column: is_price_nonpositive
+        target_data_type: BOOLEAN
+        transformation: price <= 0
+        dq_rule: Quality flag only
+        business_definition: Nonpositive price flag
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: freight_value
+        target_column: is_freight_negative
+        target_data_type: BOOLEAN
+        transformation: freight_value < 0
+        dq_rule: Quality flag only
+        business_definition: Negative freight flag
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: shipping_limit_date
+        target_column: is_ship_date_outlier
+        target_data_type: BOOLEAN
+        transformation: YEAR(shipping_limit_date) < 2017 OR > 2019
+        dq_rule: Quality flag only
+        business_definition: Shipping date outlier flag
+        status: Mapped
+        pii_tag: PII
+      - source_column: price + freight_value
+        target_column: total_item_value
+        target_data_type: DOUBLE
+        transformation: ROUND(price + freight_value, 2)
+        dq_rule: Derived after dedupe
+        business_definition: Total line value
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: freight_value / price
+        target_column: freight_ratio
+        target_data_type: DOUBLE
+        transformation: WHEN price > 0 THEN ROUND(freight_value / price, 3)
+        dq_rule: Avoid divide by zero
+        business_definition: Freight-to-price ratio
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: shipping_limit_date
+        target_column: ship_year
+        target_data_type: INT
+        transformation: YEAR(shipping_limit_date)
+        dq_rule: Time feature
+        business_definition: Shipping year
+        status: Mapped
+        pii_tag: PII
+      - source_column: shipping_limit_date
+        target_column: ship_month
+        target_data_type: INT
+        transformation: MONTH(shipping_limit_date)
+        dq_rule: Time feature
+        business_definition: Shipping month
+        status: Mapped
+        pii_tag: PII
+      - source_column: shipping_limit_date
+        target_column: ship_day
+        target_data_type: INT
+        transformation: DAYOFMONTH(shipping_limit_date)
+        dq_rule: Time feature
+        business_definition: Shipping day
+        status: Mapped
+        pii_tag: PII
+    sales.silver.order_payments:
+      source_table: sales.bronze.order_payments
+      columns:
+      - source_column: order_id
+        target_column: order_id
+        target_data_type: STRING
+        transformation: Pass-through
+        dq_rule: Payment records linked to order_id
+        business_definition: Order identifier
+        status: Mapped
+        pii_tag: PII
+      - source_column: payment_sequential
+        target_column: payment_sequential
+        target_data_type: INT
+        transformation: TRY_CAST(payment_sequential AS INT)
+        dq_rule: Null possible if cast fails
+        business_definition: Payment sequence
+        status: Mapped
+        pii_tag: PII
+      - source_column: payment_type
+        target_column: payment_type
+        target_data_type: STRING
+        transformation: LOWER(TRIM(payment_type))
+        dq_rule: Normalize payment type
+        business_definition: Payment method
+        status: Mapped
+        pii_tag: PII
+      - source_column: payment_installments
+        target_column: payment_installments
+        target_data_type: INT
+        transformation: TRY_CAST(payment_installments AS INT)
+        dq_rule: Null possible if cast fails
+        business_definition: Installment count
+        status: Mapped
+        pii_tag: PII
+      - source_column: payment_value
+        target_column: payment_value
+        target_data_type: DECIMAL(18,2)
+        transformation: ROUND(TRY_CAST(payment_value AS DOUBLE), 2)
+        dq_rule: Null possible if cast fails
+        business_definition: Payment amount
+        status: Mapped
+        pii_tag: PII
+      - source_column: payment_value/payment_installments
+        target_column: payment_per_installment
+        target_data_type: DECIMAL/DOUBLE
+        transformation: WHEN installments > 0 AND value IS NOT NULL THEN ROUND(value/installments,
+          2)
+        dq_rule: Avoid divide by zero
+        business_definition: Average value per installment
+        status: Mapped
+        pii_tag: PII
+    sales.silver.order_reviews:
+      source_table: sales.bronze.order_reviews
+      columns:
+      - source_column: review_id
+        target_column: review_id
+        target_data_type: STRING
+        transformation: TRIM(review_id)
+        dq_rule: Valid path requires review_id IS NOT NULL
+        business_definition: Review identifier
+        status: Mapped
+        pii_tag: PII
+      - source_column: order_id
+        target_column: order_id
+        target_data_type: STRING
+        transformation: TRIM(order_id)
+        dq_rule: Retain order FK
+        business_definition: Order identifier
+        status: Mapped
+        pii_tag: PII
+      - source_column: review_score
+        target_column: review_score
+        target_data_type: INT
+        transformation: TRY_CAST(review_score AS INT)
+        dq_rule: Valid path requires BETWEEN 1 AND 5; CHECK constraint added
+        business_definition: Customer rating
+        status: Mapped
+        pii_tag: PII
+      - source_column: review_creation_date
+        target_column: review_creation_ts
+        target_data_type: TIMESTAMP
+        transformation: TRY_CAST(review_creation_date AS TIMESTAMP)
+        dq_rule: Bad rows table captures invalid dates
+        business_definition: Review creation timestamp
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: review_answer_timestamp
+        target_column: review_answer_ts
+        target_data_type: TIMESTAMP
+        transformation: TRY_CAST(review_answer_timestamp AS TIMESTAMP)
+        dq_rule: Bad rows table captures invalid dates
+        business_definition: Review answer timestamp
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: review_comment_title/message
+        target_column: review_comment_title
+        target_data_type: STRING
+        transformation: Normalize whitespace; if title null and message not null then
+          SUBSTRING(message,1,50)
+        dq_rule: Text cleanup and fallback title
+        business_definition: Review title
+        status: Mapped
+        pii_tag: PII
+      - source_column: review_comment_title/message
+        target_column: is_missing_comment
+        target_data_type: BOOLEAN
+        transformation: title IS NULL AND message IS NULL
+        dq_rule: Text completeness flag
+        business_definition: Missing review text flag
+        status: Mapped
+        pii_tag: PII
+      - source_column: review_comment_title/message
+        target_column: has_title_only
+        target_data_type: BOOLEAN
+        transformation: title IS NOT NULL AND message IS NULL
+        dq_rule: Text completeness flag
+        business_definition: Title-only review flag
+        status: Mapped
+        pii_tag: PII
+      - source_column: review_comment_title/message
+        target_column: has_message_only
+        target_data_type: BOOLEAN
+        transformation: title IS NULL AND message IS NOT NULL
+        dq_rule: Text completeness flag
+        business_definition: Message-only review flag
+        status: Mapped
+        pii_tag: PII
+    sales.silver.reviews_bad_rows:
+      source_table: sales.bronze.order_reviews
+      columns:
+      - source_column: reviews_stage.*
+        target_column: '*'
+        target_data_type: SOURCE TYPES
+        transformation: Persist rows with null review_id, null review_score, invalid
+          creation timestamp, or invalid answer timestamp
+        dq_rule: Quarantine invalid/malformed rows
+        business_definition: Review quality audit table
+        status: Mapped
+        pii_tag: Non-PII
+    sales.silver.geolocation:
+      source_table: sales.bronze.geolocation
+      columns:
+      - source_column: geolocation_zip_code_prefix
+        target_column: geolocation_zip_code_prefix
+        target_data_type: INT
+        transformation: CAST to INT as zip_prefix then output as geolocation_zip_code_prefix
+        dq_rule: Aggregate to one row per zip prefix
+        business_definition: Zip prefix location key
+        status: Mapped
+        pii_tag: PII
+      - source_column: geolocation_lat
+        target_column: geolocation_lat
+        target_data_type: DOUBLE
+        transformation: CAST to DOUBLE then AVG(lat), ROUND(lat,6)
+        dq_rule: Centroid by zip prefix
+        business_definition: Latitude centroid
+        status: Mapped
+        pii_tag: PII
+      - source_column: geolocation_lng
+        target_column: geolocation_lng
+        target_data_type: DOUBLE
+        transformation: CAST to DOUBLE then AVG(lng), ROUND(lng,6)
+        dq_rule: Centroid by zip prefix
+        business_definition: Longitude centroid
+        status: Mapped
+        pii_tag: PII
+      - source_column: geolocation_city
+        target_column: geolocation_city
+        target_data_type: STRING
+        transformation: TRIM, normalize spaces, remove accents/special chars, lower;
+          choose mode city per zip
+        dq_rule: ROW_NUMBER over zip ordered by count desc, city asc
+        business_definition: Canonical city per zip prefix
+        status: Mapped
+        pii_tag: PII
+      - source_column: geolocation_state
+        target_column: geolocation_state
+        target_data_type: STRING
+        transformation: UPPER(TRIM(REGEXP_REPLACE(state_raw, spaces))) and choose
+          mode state with city
+        dq_rule: Mode state by zip prefix
+        business_definition: Canonical state per zip prefix
+        status: Mapped
+        pii_tag: PII
+    sales.silver.category_lookup:
+      source_table: sales.bronze.product_category
+      columns:
+      - source_column: product_category_name
+        target_column: category_pt
+        target_data_type: STRING
+        transformation: Rename product_category_name to category_pt
+        dq_rule: Reference lookup
+        business_definition: Portuguese category name
+        status: Mapped
+        pii_tag: Non-PII
+      - source_column: product_category_name_english
+        target_column: category_en
+        target_data_type: STRING
+        transformation: Rename product_category_name_english to category_en
+        dq_rule: Reference lookup
+        business_definition: English category name
+        status: Mapped
+        pii_tag: Non-PII
+  silver_to_gold:
+    sales.gold.customer_top_5_states_by_city_diversity:
+      source_tables: sales.silver.customers
+      columns:
+      - source_columns: customer_state
+        target_column: state
+        target_data_type: STRING
+        transformation: customer_state AS state
+        grain: Top 5 states by city diversity
+        business_use: Customer distribution analysis
+        status: Mapped
+        pii_tag: PII
+      - source_columns: customer_city
+        target_column: distinct_cities
+        target_data_type: BIGINT
+        transformation: COUNT(DISTINCT customer_city); ORDER BY distinct_cities DESC;
+          LIMIT 5
+        grain: Top 5 states by city diversity
+        business_use: Customer distribution analysis
+        status: Mapped
+        pii_tag: PII
+    sales.gold.customer_distribution_by_state:
+      source_tables: sales.silver.customers
+      columns:
+      - source_columns: customer_state
+        target_column: state
+        target_data_type: STRING
+        transformation: Group customer_city counts by state
+        grain: One row per customer state
+        business_use: State-level customer distribution and top-city analysis
+        status: Mapped
+        pii_tag: PII
+      - source_columns: customer_city
+        target_column: distinct_cities
+        target_data_type: BIGINT
+        transformation: COUNT(DISTINCT city)
+        grain: One row per customer state
+        business_use: State-level customer distribution and top-city analysis
+        status: Mapped
+        pii_tag: PII
+      - source_columns: customer_id/customer_city
+        target_column: total_customers
+        target_data_type: BIGINT
+        transformation: SUM(customer_count) from city_counts
+        grain: One row per customer state
+        business_use: State-level customer distribution and top-city analysis
+        status: Mapped
+        pii_tag: PII
+      - source_columns: customer_count
+        target_column: avg_customers_per_city
+        target_data_type: DOUBLE
+        transformation: ROUND(AVG(customer_count), 2)
+        grain: One row per customer state
+        business_use: State-level customer distribution and top-city analysis
+        status: Mapped
+        pii_tag: PII
+      - source_columns: customer_city
+        target_column: top_city
+        target_data_type: STRING
+        transformation: ROW_NUMBER per state ORDER BY customer_count DESC; rn=1
+        grain: One row per customer state
+        business_use: State-level customer distribution and top-city analysis
+        status: Mapped
+        pii_tag: PII
+      - source_columns: customer_count
+        target_column: top_city_customers
+        target_data_type: BIGINT
+        transformation: customer_count for top city
+        grain: One row per customer state
+        business_use: State-level customer distribution and top-city analysis
+        status: Mapped
+        pii_tag: PII
+    sales.gold.seller_city_stats:
+      source_tables: sales.silver.sellers
+      columns:
+      - source_columns: seller_city
+        target_column: city_display
+        target_data_type: STRING
+        transformation: INITCAP(seller_city)
+        grain: One row per seller city and state
+        business_use: Seller concentration and Pareto-style city statistics
+        status: Mapped
+        pii_tag: PII
+      - source_columns: seller_state
+        target_column: state_code
+        target_data_type: STRING
+        transformation: UPPER(seller_state)
+        grain: One row per seller city and state
+        business_use: Seller concentration and Pareto-style city statistics
+        status: Mapped
+        pii_tag: PII
+      - source_columns: seller_id
+        target_column: seller_count
+        target_data_type: BIGINT
+        transformation: COUNT(*) by city_display, state_code
+        grain: One row per seller city and state
+        business_use: Seller concentration and Pareto-style city statistics
+        status: Mapped
+        pii_tag: PII
+      - source_columns: seller_count
+        target_column: rnk
+        target_data_type: INT
+        transformation: DENSE_RANK over seller_count DESC, city_display
+        grain: One row per seller city and state
+        business_use: Seller concentration and Pareto-style city statistics
+        status: Mapped
+        pii_tag: PII
+      - source_columns: seller_count
+        target_column: cum_share
+        target_data_type: DOUBLE
+        transformation: ROUND(cumulative sellers / total sellers, 3)
+        grain: One row per seller city and state
+        business_use: Seller concentration and Pareto-style city statistics
+        status: Mapped
+        pii_tag: PII
+    sales.gold.product_category_summary:
+      source_tables: sales.silver.products
+      columns:
+      - source_columns: product_category_name
+        target_column: product_category_name
+        target_data_type: STRING
+        transformation: GROUP BY product_category_name; filter category not null
+        grain: One row per product category
+        business_use: Product category physical profile analysis
+        status: Mapped
+        pii_tag: Non-PII
+      - source_columns: product_weight_g
+        target_column: avg_weight_g
+        target_data_type: DOUBLE
+        transformation: ROUND(AVG(product_weight_g), 2)
+        grain: One row per product category
+        business_use: Product category physical profile analysis
+        status: Mapped
+        pii_tag: Non-PII
+      - source_columns: product_length_cm
+        target_column: avg_length_cm
+        target_data_type: DOUBLE
+        transformation: ROUND(AVG(product_length_cm), 2)
+        grain: One row per product category
+        business_use: Product category physical profile analysis
+        status: Mapped
+        pii_tag: Non-PII
+      - source_columns: product_height_cm
+        target_column: avg_height_cm
+        target_data_type: DOUBLE
+        transformation: ROUND(AVG(product_height_cm), 2)
+        grain: One row per product category
+        business_use: Product category physical profile analysis
+        status: Mapped
+        pii_tag: Non-PII
+      - source_columns: product_width_cm
+        target_column: avg_width_cm
+        target_data_type: DOUBLE
+        transformation: ROUND(AVG(product_width_cm), 2)
+        grain: One row per product category
+        business_use: Product category physical profile analysis
+        status: Mapped
+        pii_tag: Non-PII
+      - source_columns: product_volume_cm3
+        target_column: avg_volume_cm3
+        target_data_type: DOUBLE
+        transformation: ROUND(AVG(product_volume_cm3), 2)
+        grain: One row per product category
+        business_use: Product category physical profile analysis
+        status: Mapped
+        pii_tag: Non-PII
+      - source_columns: product_weight_g/product_volume_cm3
+        target_column: avg_density
+        target_data_type: DOUBLE
+        transformation: ROUND(AVG(product_weight_g / product_volume_cm3), 3)
+        grain: One row per product category
+        business_use: Product category physical profile analysis
+        status: Mapped
+        pii_tag: Non-PII
+    sales.gold.product_category_summary_en:
+      source_tables: sales.silver.product_category_summary + sales.silver.category_lookup
+      columns:
+      - source_columns: product_category_name/category_pt
+        target_column: category_pt
+        target_data_type: STRING
+        transformation: p.product_category_name AS category_pt
+        grain: One row per translated product category
+        business_use: English-friendly product category analysis
+        status: Mapped
+        pii_tag: Non-PII
+      - source_columns: category_en or product_category_name
+        target_column: category_en
+        target_data_type: STRING
+        transformation: COALESCE(l.category_en, p.product_category_name)
+        grain: One row per translated product category
+        business_use: English-friendly product category analysis
+        status: Mapped
+        pii_tag: Non-PII
+      - source_columns: category_en
+        target_column: category_en_display
+        target_data_type: STRING
+        transformation: INITCAP(REGEXP_REPLACE(COALESCE(category_en, product_category_name),
+          '_', ' '))
+        grain: One row per translated product category
+        business_use: English-friendly product category analysis
+        status: Mapped
+        pii_tag: Non-PII
+      - source_columns: avg_weight_g
+        target_column: avg_weight_g
+        target_data_type: DOUBLE
+        transformation: Pass-through
+        grain: One row per translated product category
+        business_use: English-friendly product category analysis
+        status: Mapped
+        pii_tag: Non-PII
+      - source_columns: avg_length_cm
+        target_column: avg_length_cm
+        target_data_type: DOUBLE
+        transformation: Pass-through
+        grain: One row per translated product category
+        business_use: English-friendly product category analysis
+        status: Mapped
+        pii_tag: Non-PII
+      - source_columns: avg_height_cm
+        target_column: avg_height_cm
+        target_data_type: DOUBLE
+        transformation: Pass-through
+        grain: One row per translated product category
+        business_use: English-friendly product category analysis
+        status: Mapped
+        pii_tag: Non-PII
+      - source_columns: avg_width_cm
+        target_column: avg_width_cm
+        target_data_type: DOUBLE
+        transformation: Pass-through
+        grain: One row per translated product category
+        business_use: English-friendly product category analysis
+        status: Mapped
+        pii_tag: Non-PII
+      - source_columns: avg_volume_cm3
+        target_column: avg_volume_cm3
+        target_data_type: DOUBLE
+        transformation: Pass-through
+        grain: One row per translated product category
+        business_use: English-friendly product category analysis
+        status: Mapped
+        pii_tag: Non-PII
+      - source_columns: avg_density
+        target_column: avg_density
+        target_data_type: DOUBLE
+        transformation: Pass-through
+        grain: One row per translated product category
+        business_use: English-friendly product category analysis
+        status: Mapped
+        pii_tag: Non-PII
+    sales.gold.order_performance:
+      source_tables: sales.silver.orders + order_items + order_payments + order_reviews
+      columns:
+      - source_columns: orders.order_id
+        target_column: order_id
+        target_data_type: STRING
+        transformation: o.order_id
+        grain: One row per order
+        business_use: Unified order-level commercial, payment, delivery, and review
+          analytics
+        status: Mapped
+        pii_tag: PII
+      - source_columns: orders.order_purchase_timestamp
+        target_column: purchase_date
+        target_data_type: DATE
+        transformation: DATE(o.order_purchase_timestamp)
+        grain: One row per order
+        business_use: Unified order-level commercial, payment, delivery, and review
+          analytics
+        status: Mapped
+        pii_tag: PII
+      - source_columns: orders.order_status_group
+        target_column: order_status_group
+        target_data_type: STRING
+        transformation: Pass-through
+        grain: One row per order
+        business_use: Unified order-level commercial, payment, delivery, and review
+          analytics
+        status: Mapped
+        pii_tag: PII
+      - source_columns: orders.delivery_days
+        target_column: delivery_days
+        target_data_type: INT
+        transformation: Pass-through
+        grain: One row per order
+        business_use: Unified order-level commercial, payment, delivery, and review
+          analytics
+        status: Mapped
+        pii_tag: PII
+      - source_columns: orders.delay_days
+        target_column: delay_days
+        target_data_type: INT
+        transformation: Pass-through
+        grain: One row per order
+        business_use: Unified order-level commercial, payment, delivery, and review
+          analytics
+        status: Mapped
+        pii_tag: PII
+      - source_columns: order_items.price + freight_value
+        target_column: order_value
+        target_data_type: DOUBLE
+        transformation: 'item_summary: ROUND(SUM(price + freight_value), 2) by order_id'
+        grain: One row per order
+        business_use: Unified order-level commercial, payment, delivery, and review
+          analytics
+        status: Mapped
+        pii_tag: PII
+      - source_columns: order_items.*
+        target_column: item_count
+        target_data_type: BIGINT
+        transformation: 'item_summary: COUNT(*) by order_id'
+        grain: One row per order
+        business_use: Unified order-level commercial, payment, delivery, and review
+          analytics
+        status: Mapped
+        pii_tag: PII
+      - source_columns: order_payments.payment_type
+        target_column: payment_type
+        target_data_type: STRING
+        transformation: 'payment_summary: FIRST(payment_type) by order_id'
+        grain: One row per order
+        business_use: Unified order-level commercial, payment, delivery, and review
+          analytics
+        status: Mapped
+        pii_tag: PII
+      - source_columns: order_payments.payment_value
+        target_column: total_payment
+        target_data_type: DOUBLE
+        transformation: 'payment_summary: ROUND(SUM(payment_value), 2) by order_id'
+        grain: One row per order
+        business_use: Unified order-level commercial, payment, delivery, and review
+          analytics
+        status: Mapped
+        pii_tag: PII
+      - source_columns: order_payments.payment_installments
+        target_column: avg_installments
+        target_data_type: DOUBLE
+        transformation: ROUND(AVG(NULLIF(payment_installments, 0)), 2)
+        grain: One row per order
+        business_use: Unified order-level commercial, payment, delivery, and review
+          analytics
+        status: Mapped
+        pii_tag: PII
+      - source_columns: order_reviews.review_score
+        target_column: avg_review_score
+        target_data_type: DOUBLE
+        transformation: 'reviews_summary: ROUND(AVG(review_score), 2) by order_id'
+        grain: One row per order
+        business_use: Unified order-level commercial, payment, delivery, and review
+          analytics
+        status: Mapped
+        pii_tag: PII
+  dq_rules:
+    orders:
+    - rule_id: BRZ_ORD_001
+      layer: Bronze
+      columns: order_id
+      rule_type: Duplicate check
+      expectation: order_id should be unique
+      action: Profile duplicates, keep Bronze raw
+      severity: Medium
+      status: Implemented / Documented
+      pii_tag: PII
+    - rule_id: SLV_ORD_001
+      layer: Silver
+      columns: order_status
+      rule_type: Standardization
+      expectation: delivered/invoiced -> completed; canceled/unavaliable -> canceled;
+        else pending
+      action: Map to order_status_group
+      severity: High
+      status: Implemented / Documented
+      pii_tag: Non-PII
+    - rule_id: SLV_ORD_002
+      layer: Silver
+      columns: order timestamps
+      rule_type: Temporal integrity
+      expectation: approved < purchase OR carrier < approved OR delivered < carrier
+        marks invalid
+      action: Flag is_invalid_timeflow
+      severity: High
+      status: Implemented / Documented
+      pii_tag: Non-PII
+    - rule_id: SLV_ORD_003
+      layer: Silver
+      columns: approved/carrier/customer dates
+      rule_type: Completeness
+      expectation: Null approved/carrier/customer delivery dates should be visible
+      action: Create missing-date boolean flags
+      severity: Medium
+      status: Implemented / Documented
+      pii_tag: PII
+    order_reviews:
+    - rule_id: BRZ_REV_001
+      layer: Bronze
+      columns: review_id
+      rule_type: Duplicate check
+      expectation: Duplicate review_id detected in profiling notes
+      action: Resolve in Silver using ROW_NUMBER latest answer/creation timestamp
+      severity: High
+      status: Implemented / Documented
+      pii_tag: PII
+    - rule_id: SLV_REV_001
+      layer: Silver
+      columns: review_score
+      rule_type: Constraint
+      expectation: review_score must be between 1 and 5
+      action: Add CHECK constraint and dedupe valid rows
+      severity: High
+      status: Implemented / Documented
+      pii_tag: Non-PII
+    - rule_id: SLV_REV_002
+      layer: Silver
+      columns: review_id/review_score/timestamps
+      rule_type: Quarantine
+      expectation: Null review_id, null review_score, or invalid timestamps should
+        be isolated
+      action: Write _reviews_bad_rows
+      severity: High
+      status: Implemented / Documented
+      pii_tag: PII
+    products:
+    - rule_id: SLV_PRD_001
+      layer: Silver
+      columns: product_weight_g/product_length_cm/product_height_cm/product_width_cm
+      rule_type: Range check
+      expectation: Weight 0-10000; dimensions 0-200
+      action: Filter out records outside ranges before Silver write
+      severity: High
+      status: Implemented / Documented
+      pii_tag: Non-PII
+    - rule_id: SLV_PRD_002
+      layer: Silver
+      columns: product_category_name/product_photos_qty
+      rule_type: Missing value handling
+      expectation: category -> unknown_category; photos -> 1
+      action: COALESCE values
+      severity: Medium
+      status: Implemented / Documented
+      pii_tag: Non-PII
+    order_items:
+    - rule_id: SLV_ITM_001
+      layer: Silver
+      columns: order_id + order_item_id
+      rule_type: Duplicate resolution
+      expectation: Keep latest shipping_limit_date, then highest price
+      action: ROW_NUMBER per composite key
+      severity: High
+      status: Implemented / Documented
+      pii_tag: PII
+    - rule_id: SLV_ITM_002
+      layer: Silver
+      columns: price/freight_value
+      rule_type: Value check
+      expectation: price <= 0 or freight_value < 0 should be flagged
+      action: Create is_price_nonpositive and is_freight_negative
+      severity: Medium
+      status: Implemented / Documented
+      pii_tag: Non-PII
+    - rule_id: SLV_ITM_003
+      layer: Silver
+      columns: shipping_limit_date
+      rule_type: Date range check
+      expectation: ship year outside 2017 to 2019 is outlier
+      action: Create is_ship_date_outlier
+      severity: Low
+      status: Implemented / Documented
+      pii_tag: Non-PII
+    geolocation:
+    - rule_id: SLV_GEO_001
+      layer: Silver
+      columns: zip/city/state/lat/lng
+      rule_type: Deduplication
+      expectation: One representative row per zip prefix
+      action: Use average centroid and mode city/state
+      severity: Medium
+      status: Implemented / Documented
+      pii_tag: Non-PII
+    order_performance:
+    - rule_id: GLD_ORDPERF_001
+      layer: Gold
+      columns: order_id
+      rule_type: Aggregation grain
+      expectation: One row per order after joining item, payment, and review summaries
+      action: LEFT JOIN summaries to orders
+      severity: High
+      status: Implemented / Documented
+      pii_tag: PII

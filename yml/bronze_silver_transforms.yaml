@@ -1,0 +1,102 @@
+tables:
+  sales.silver.category_lookup: 'CREATE OR REPLACE TABLE sales.silver.category_lookup
+    AS
+
+    SELECT product_category_name AS category_pt, product_category_name_english AS
+    category_en
+
+    FROM sales.bronze.product_category_name_translation'
+  sales.silver.customers: "CREATE OR REPLACE TABLE sales.silver.customers AS\nSELECT\
+    \ DISTINCT\n    customer_id,\n    customer_unique_id,\n    CAST(customer_zip_code_prefix\
+    \ AS INT),\n    LOWER(TRIM(REGEXP_REPLACE(customer_city, '\\s+', ' '))),\n   \
+    \ UPPER(TRIM(REGEXP_REPLACE(customer_state, '\\s+', ' ')))\nFROM sales.bronze.customers\n\
+    WHERE customer_id IS NOT NULL"
+  sales.silver.geolocation: "CREATE OR REPLACE TABLE sales.silver.geolocation AS\n\
+    WITH normalized AS (\n    SELECT CAST(geolocation_zip_code_prefix AS INT)    \
+    \         AS zip_prefix,\n        CAST(geolocation_lat AS DOUBLE) AS lat, CAST(geolocation_lng\
+    \ AS DOUBLE) AS lng,\n        LOWER(TRIM(REGEXP_REPLACE(geolocation_city,  '\\\
+    s+', ' '))) AS city_clean,\n        UPPER(TRIM(REGEXP_REPLACE(geolocation_state,\
+    \ '\\s+', ' '))) AS state_clean\n    FROM sales.bronze.geolocation\n),\ncentroid\
+    \ AS (\n    SELECT zip_prefix, ROUND(AVG(lat),6) AS geolocation_lat, ROUND(AVG(lng),6)\
+    \ AS geolocation_lng\n    FROM normalized GROUP BY zip_prefix\n),\nmode_city AS\
+    \ (\n    SELECT zip_prefix, city_clean AS geolocation_city, state_clean AS geolocation_state\n\
+    \    FROM (\n        SELECT zip_prefix, city_clean, state_clean,\n           \
+    \ ROW_NUMBER() OVER (PARTITION BY zip_prefix ORDER BY COUNT(*) DESC, city_clean\
+    \ ASC) AS rn\n        FROM normalized GROUP BY zip_prefix, city_clean, state_clean\n\
+    \    ) WHERE rn = 1\n)\nSELECT c.zip_prefix AS geolocation_zip_code_prefix,\n\
+    \    c.geolocation_lat, c.geolocation_lng, m.geolocation_city, m.geolocation_state\n\
+    FROM centroid c JOIN mode_city m ON c.zip_prefix = m.zip_prefix"
+  sales.silver.order_items: "CREATE OR REPLACE TABLE sales.silver.order_items AS\n\
+    SELECT     TRIM(order_id),\n    CAST(order_item_id AS INT),\n    TRIM(product_id),\n\
+    \    TRIM(seller_id),\n    CAST(price AS DOUBLE),\n    CAST(freight_value AS DOUBLE),\n\
+    \    ROUND(price + freight_value, 2) AS total_item_value\nFROM sales.bronze.order_items"
+  sales.silver.order_payments: "CREATE OR REPLACE TABLE sales.silver.order_payments\
+    \ AS\nSELECT     order_id,\n    LOWER(TRIM(payment_type)),\n    ROUND(TRY_CAST(payment_value\
+    \ AS DOUBLE), 2)\nFROM sales.bronze.order_payments"
+  sales.silver.order_reviews: "CREATE OR REPLACE TABLE sales.silver.order_reviews\
+    \ AS\nSELECT     TRIM(review_id),\n    TRIM(order_id)\nFROM sales.bronze.order_reviews"
+  sales.silver.orders: "CREATE OR REPLACE TABLE sales.silver.orders AS\nSELECT order_id,\
+    \ customer_id,\n    CASE WHEN LOWER(TRIM(order_status)) IN ('delivered','invoiced')\
+    \   THEN 'completed'\n         WHEN LOWER(TRIM(order_status)) IN ('canceled','unavailable')\
+    \ THEN 'canceled'\n         ELSE 'pending' END                               \
+    \             AS order_status_group,\n    order_purchase_timestamp, order_delivered_customer_date,\n\
+    \    TO_DATE(order_purchase_timestamp)                                  AS purchase_date,\n\
+    \    TO_DATE(order_approved_at)                                         AS approved_date,\n\
+    \    TO_DATE(order_delivered_carrier_date)                              AS carrier_date,\n\
+    \    TO_DATE(order_delivered_customer_date)                             AS delivered_date,\n\
+    \    TO_DATE(order_estimated_delivery_date)                             AS estimated_date,\n\
+    \    HOUR(order_purchase_timestamp)                                     AS purchase_hour,\n\
+    \    CASE WHEN order_delivered_customer_date IS NOT NULL THEN HOUR(order_delivered_customer_date)\
+    \ END AS delivered_hour,\n    DATE_FORMAT(order_purchase_timestamp, 'E')     \
+    \                    AS purchase_weekday_name,\n    CASE WHEN order_delivered_customer_date\
+    \ IS NOT NULL THEN DATE_FORMAT(order_delivered_customer_date, 'E') END AS delivered_weekday_name,\n\
+    \    DATEDIFF(order_delivered_customer_date, order_purchase_timestamp)  AS delivery_days,\n\
+    \    DATEDIFF(order_delivered_customer_date, order_estimated_delivery_date) AS\
+    \ delay_days,\n    CASE WHEN HOUR(order_purchase_timestamp) BETWEEN 6  AND 11\
+    \ THEN 'morning'\n         WHEN HOUR(order_purchase_timestamp) BETWEEN 12 AND\
+    \ 17 THEN 'afternoon'\n         WHEN HOUR(order_purchase_timestamp) BETWEEN 18\
+    \ AND 22 THEN 'evening'\n         ELSE 'night' END                           \
+    \                   AS purchase_part_of_day,\n    DAYOFWEEK(order_purchase_timestamp)\
+    \ IN (1,7)                       AS is_weekend_purchase,\n    (order_approved_at\
+    \ < order_purchase_timestamp\n     OR order_delivered_carrier_date < order_approved_at\n\
+    \     OR order_delivered_customer_date < order_delivered_carrier_date)  AS is_invalid_timeflow,\n\
+    \    order_delivered_customer_date IS NULL AS is_missing_customer_date,\n    order_delivered_carrier_date\
+    \  IS NULL AS is_missing_carrier_date,\n    order_approved_at             IS NULL\
+    \ AS is_missing_approved\nFROM sales.bronze.orders"
+  sales.silver.products: "CREATE OR REPLACE TABLE sales.silver.products AS\nWITH base\
+    \ AS (\n    SELECT product_id,\n        COALESCE(product_category_name, 'unknown_category')\
+    \   AS product_category_name,\n        CAST(product_name_lenght        AS INT)\
+    \               AS product_name_lenght_raw,\n        CAST(product_description_lenght\
+    \ AS INT)               AS product_description_lenght_raw,\n        COALESCE(CAST(product_photos_qty\
+    \ AS INT), 1)          AS product_photos_qty,\n        CAST(product_weight_g \
+    \ AS FLOAT) AS product_weight_g,\n        CAST(product_length_cm AS FLOAT) AS\
+    \ product_length_cm,\n        CAST(product_height_cm AS FLOAT) AS product_height_cm,\n\
+    \        CAST(product_width_cm  AS FLOAT) AS product_width_cm\n    FROM sales.bronze.products\n\
+    \    WHERE CAST(product_weight_g  AS FLOAT) > 0 AND CAST(product_weight_g  AS\
+    \ FLOAT) < 10000\n      AND CAST(product_length_cm AS FLOAT) > 0 AND CAST(product_length_cm\
+    \ AS FLOAT) < 200\n      AND CAST(product_height_cm AS FLOAT) > 0 AND CAST(product_height_cm\
+    \ AS FLOAT) < 200\n      AND CAST(product_width_cm  AS FLOAT) > 0 AND CAST(product_width_cm\
+    \  AS FLOAT) < 200\n),\nimputed AS (\n    SELECT *,\n        COALESCE(product_name_lenght_raw,\n\
+    \            CAST(ROUND(AVG(product_name_lenght_raw) OVER (PARTITION BY product_category_name))\
+    \ AS INT)) AS product_name_lenght,\n        COALESCE(product_description_lenght_raw,\n\
+    \            CAST(ROUND(AVG(product_description_lenght_raw) OVER (PARTITION BY\
+    \ product_category_name)) AS INT)) AS product_description_lenght\n    FROM base\n\
+    )\nSELECT product_id, product_category_name, product_name_lenght, product_description_lenght,\n\
+    \    product_photos_qty, product_weight_g, product_length_cm, product_height_cm,\
+    \ product_width_cm,\n    ROUND(product_length_cm * product_height_cm * product_width_cm,\
+    \ 2) AS product_volume_cm3,\n    CASE WHEN (product_length_cm * product_height_cm\
+    \ * product_width_cm) > 0\n         THEN ROUND(product_weight_g / NULLIF(product_length_cm\
+    \ * product_height_cm * product_width_cm, 0), 4)\n         ELSE NULL END AS product_density_g_per_cm3,\n\
+    \    current_timestamp() AS last_update_ts\nFROM imputed"
+  sales.silver.reviews_bad_rows: "CREATE OR REPLACE TABLE sales.silver.reviews_bad_rows\
+    \ AS\nSELECT * FROM sales.bronze.order_reviews\nWHERE review_id IS NULL\n   OR\
+    \ TRY_CAST(review_score AS INT) NOT BETWEEN 1 AND 5\n   OR TRY_CAST(review_creation_date\
+    \    AS TIMESTAMP) IS NULL\n   OR TRY_CAST(review_answer_timestamp AS TIMESTAMP)\
+    \ IS NULL"
+  sales.silver.sellers: "CREATE OR REPLACE TABLE sales.silver.sellers AS\nWITH deduped\
+    \ AS (\n    SELECT *, ROW_NUMBER() OVER (PARTITION BY seller_id ORDER BY seller_id)\
+    \ AS rn\n    FROM sales.bronze.sellers WHERE seller_id IS NOT NULL\n)\nSELECT\
+    \ seller_id,\n    CAST(seller_zip_code_prefix AS INT)                        AS\
+    \ seller_zip_code_prefix,\n    LOWER(TRIM(REGEXP_REPLACE(seller_city,  '\\s+',\
+    \ ' ')))    AS seller_city,\n    UPPER(TRIM(REGEXP_REPLACE(seller_state, '\\s+',\
+    \ ' ')))    AS seller_state\nFROM deduped WHERE rn = 1"
