@@ -3,21 +3,20 @@ resources:
     automation_sales_etl_job:
       name: automation_sales_etl_job
       tasks:
-        - task_key: pull-datasets
-          notebook_task:
-            notebook_path: /Repos/jaysonheyyou@gmail.com/DATABRICKS-END-TO-END/notebook/pull_data_from_github
-            source: WORKSPACE
         - task_key: master_file_and_generate_ymls
-          depends_on:
-            - task_key: pull-datasets
           notebook_task:
             notebook_path: /Repos/jaysonheyyou@gmail.com/DATABRICKS-END-TO-END/notebook/pull_master_file_&_create_yaml
             source: WORKSPACE
         - task_key: bronze-silver
           depends_on:
             - task_key: master_file_and_generate_ymls
+            - task_key: pull-datasets
           notebook_task:
             notebook_path: /Repos/jaysonheyyou@gmail.com/DATABRICKS-END-TO-END/notebook/bronze-silver
+            source: WORKSPACE
+        - task_key: pull-datasets
+          notebook_task:
+            notebook_path: /Repos/jaysonheyyou@gmail.com/DATABRICKS-END-TO-END/notebook/pull_data_from_github
             source: WORKSPACE
         - task_key: silver-gold
           depends_on:
